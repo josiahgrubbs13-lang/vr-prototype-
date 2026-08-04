@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,13 +21,13 @@
 
 <div id="info">
   <b>Elemental Clash — VR Prototype</b><br/>
-  <b>Left hand:</b> push off the ground / platforms to fly around (no button needed, just shove your hand against a surface).<br/>
-  <b>Right hand:</b> hold the GRIP button and draw a shape in the air, then release to cast.<br/>
-  &nbsp;&nbsp;• Draw a <b>circle</b> → Fireball<br/>
-  &nbsp;&nbsp;• Draw a <b>straight slash</b> → Wind Blade<br/>
-  &nbsp;&nbsp;• Draw a <b>zigzag</b> → Lightning Bolt<br/>
-  &nbsp;&nbsp;• Draw a <b>triangle</b> → Mana Blast<br/>
-  &nbsp;&nbsp;• Draw a <b>curvy downward wave</b> → Water Blast<br/>
+  <b>Left hand:</b> thumbstick to walk, or push off the ground/platforms to fly (no button needed, just shove your hand against a surface).<br/>
+  <b>Right hand:</b> press a button to cast.<br/>
+  &nbsp;&nbsp;• <b>Trigger</b> → Fireball<br/>
+  &nbsp;&nbsp;• <b>Grip</b> → Wind Blade<br/>
+  &nbsp;&nbsp;• <b>A / X button</b> → Lightning Bolt<br/>
+  &nbsp;&nbsp;• <b>B / Y button</b> → Mana Blast<br/>
+  &nbsp;&nbsp;• <b>Thumbstick click</b> → Water Blast<br/>
   Hit the target dummy, or throw a spell into the blue portal and watch it exit the orange one.
 </div>
 
@@ -44,15 +43,14 @@
 <script type="module">
 import * as THREE from "three";
 import { VRButton } from "three/addons/webxr/VRButton.js";
-import { Reflector } from "three/addons/objects/Reflector.js";
 
 // ---------------------------------------------------------------
 // BASIC SCENE SETUP
 // ---------------------------------------------------------------
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x101018);
-scene.fog = new THREE.Fog(0x101018, 15, 60);
+scene.background = new THREE.Color(0xbcdff8);
+scene.fog = new THREE.Fog(0xbcdff8, 22, 72);
 
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 100);
 
@@ -85,6 +83,56 @@ const dolly = new THREE.Group();
 dolly.position.set(0, 0, 5);
 dolly.add(camera);
 scene.add(dolly);
+
+// ---------------------------------------------------------------
+// SKY: a low-res pixel gradient + blocky clouds on a big dome, so the
+// "void" past the forest reads as a sky instead of empty black space.
+// fog:false so it stays bright and doesn't fade into the fog color.
+// ---------------------------------------------------------------
+
+function makeSkyTexture() {
+  const w = 64, h = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+
+  // banded (stepped, not smooth) vertical gradient -- pixel-art skies
+  // are usually a handful of discrete color bands, not a blend
+  const bands = ["#2a5aa0", "#3d76c4", "#5590d8", "#75ade6", "#9dc9f0", "#c4e2f8", "#eaf7ff"];
+  const bandH = h / bands.length;
+  for (let i = 0; i < bands.length; i++) {
+    ctx.fillStyle = bands[i];
+    ctx.fillRect(0, i * bandH, w, bandH + 1);
+  }
+
+  // blocky pixel clouds -- clusters of solid squares, not soft puffs
+  ctx.fillStyle = "#ffffff";
+  for (let i = 0; i < 9; i++) {
+    const cx = Math.random() * w;
+    const cy = 3 + Math.random() * (h * 0.32);
+    const block = 2;
+    const puffW = 3 + Math.floor(Math.random() * 4);
+    for (let bx = 0; bx < puffW; bx++) {
+      for (let by = 0; by < 2; by++) {
+        if (Math.random() < 0.8) {
+          ctx.fillRect(Math.floor(cx + bx * block - (puffW * block) / 2), Math.floor(cy + by * block), block, block);
+        }
+      }
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  return tex;
+}
+
+const skyMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(85, 16, 12),
+  new THREE.MeshBasicMaterial({ map: makeSkyTexture(), side: THREE.BackSide, fog: false })
+);
+scene.add(skyMesh);
 
 // ---------------------------------------------------------------
 // Hand-drawn (canvas) textures -- flat cartoony shapes and blotches,
@@ -300,14 +348,29 @@ const mirrorFrame = new THREE.Mesh(
 mirrorFrame.position.set(0, 1.2, 3.4);
 scene.add(mirrorFrame);
 
-const mirror = new Reflector(new THREE.PlaneGeometry(3, 2.2), {
-  clipBias: 0.003,
-  textureWidth: window.innerWidth * window.devicePixelRatio,
-  textureHeight: window.innerHeight * window.devicePixelRatio,
-  color: 0x888888,
-});
+// three.js's Reflector doesn't render correctly under WebXR's stereo
+// (two-eye) camera, so the mirror uses a CubeCamera instead -- it renders
+// a normal 6-face cubemap each frame from a fixed point, independent of
+// which eye is currently drawing, and that gets used as a reflection map.
+// It's not a perfect flat mirror (more like a curved/chrome reflection),
+// but it reflects you and the scene correctly in both eyes.
+const mirrorRenderTarget = new THREE.WebGLCubeRenderTarget(256);
+const mirrorCubeCamera = new THREE.CubeCamera(0.1, 60, mirrorRenderTarget);
+mirrorCubeCamera.position.set(0, 1.2, 3.3);
+scene.add(mirrorCubeCamera);
+
+const mirror = new THREE.Mesh(
+  new THREE.PlaneGeometry(3, 2.2),
+  new THREE.MeshStandardMaterial({ envMap: mirrorRenderTarget.texture, roughness: 0.05, metalness: 1 })
+);
 mirror.position.set(0, 1.2, 3.38); // just in front of the frame, facing the spawn point at z=5
 scene.add(mirror);
+
+function updateMirror() {
+  mirror.visible = false; // don't reflect the mirror's own plane
+  mirrorCubeCamera.update(renderer, scene);
+  mirror.visible = true;
+}
 
 // ---------------------------------------------------------------
 // SPELL SIGN: a signpost near spawn listing each gesture -> spell
@@ -334,11 +397,11 @@ function makeSignTexture() {
   ctx.textAlign = "left";
   ctx.font = "bold 24px sans-serif";
   const lines = [
-    ["Circle", "→  Fireball"],
-    ["Straight slash", "→  Wind Blade"],
-    ["Zigzag", "→  Lightning Bolt"],
-    ["Triangle", "→  Mana Blast"],
-    ["Curvy downward wave", "→  Water Blast"],
+    ["Trigger", "→  Fireball"],
+    ["Grip", "→  Wind Blade"],
+    ["A / X button", "→  Lightning Bolt"],
+    ["B / Y button", "→  Mana Blast"],
+    ["Thumbstick click", "→  Water Blast"],
   ];
   let y = 106;
   for (const [gesture, spell] of lines) {
@@ -349,10 +412,10 @@ function makeSignTexture() {
     y += 78;
   }
 
-  ctx.font = "20px sans-serif";
+  ctx.font = "18px sans-serif";
   ctx.fillStyle = "#e8d3a8";
-  ctx.fillText("Hold RIGHT grip, draw the shape,", 36, h - 46);
-  ctx.fillText("release to cast", 36, h - 20);
+  ctx.fillText("Right hand: press a button to cast.", 36, h - 46);
+  ctx.fillText("Left stick: walk. Left hand: push to fly.", 36, h - 20);
 
   const tex = new THREE.CanvasTexture(canvas);
   return tex;
@@ -419,101 +482,49 @@ const portalB = makePortal(6, 1.2, -8, 0xff9933);  // orange - exit
 // lightning bolt shape -- built from primitives, no external art
 // ---------------------------------------------------------------
 
-function makeGlowTexture() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.4, "rgba(255,255,255,0.6)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(canvas);
-}
-const glowTexture = makeGlowTexture();
-
-// A tiny, hard-edged blob drawn at low resolution then scaled up with
-// nearest-neighbor filtering -- reads as chunky "pixel art" instead of a
-// smooth glow, used to pixelate specific spells without touching the rest.
-function makePixelTexture() {
-  const size = 8;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const onPixels = [
-    [3, 1], [4, 1],
-    [2, 2], [3, 2], [4, 2], [5, 2],
-    [1, 3], [2, 3], [3, 3], [4, 3], [5, 3], [6, 3],
-    [1, 4], [2, 4], [3, 4], [4, 4], [5, 4], [6, 4],
-    [2, 5], [3, 5], [4, 5], [5, 5],
-    [3, 6], [4, 6],
-  ];
-  ctx.fillStyle = "#ffffff";
-  for (const [x, y] of onPixels) ctx.fillRect(x, y, 1, 1);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = THREE.NearestFilter; // keeps the upscaled edges hard/blocky
-  tex.minFilter = THREE.NearestFilter;
-  return tex;
-}
-const pixelTexture = makePixelTexture();
-
 // A small particle burst that continuously respawns -- used for fire
-// embers, wind trails, and sparks. Colors are picked randomly per
-// particle from the given palette.
-function createEmberSystem(count, colors, spread = 0.15, particleSize = 0.04, texture = glowTexture) {
-  const positions = new Float32Array(count * 3);
-  const colorsArr = new Float32Array(count * 3);
+// embers, wind trails, and elemental sparks. Built from tiny cube
+// instances (not sprites) so it reads as genuinely blocky/voxel-pixelated
+// from any angle, not just a flat billboard.
+function createEmberSystem(count, colors, spread = 0.15, particleSize = 0.04) {
+  const geo = new THREE.BoxGeometry(1, 1, 1); // unit cube, scaled per instance
+  const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95 });
+  const mesh = new THREE.InstancedMesh(geo, mat, count);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+
   const ages = new Float32Array(count).fill(0);
   const lifespans = new Float32Array(count);
+  const positions = [];
   const velocities = [];
+  const dummy = new THREE.Object3D();
+  const tmpColor = new THREE.Color();
 
   function resetParticle(i) {
-    positions[i * 3 + 0] = (Math.random() - 0.5) * spread;
-    positions[i * 3 + 1] = (Math.random() - 0.5) * spread;
-    positions[i * 3 + 2] = (Math.random() - 0.5) * spread;
-    const c = colors[Math.floor(Math.random() * colors.length)];
-    colorsArr[i * 3 + 0] = c.r;
-    colorsArr[i * 3 + 1] = c.g;
-    colorsArr[i * 3 + 2] = c.b;
+    positions[i] = new THREE.Vector3((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread);
+    tmpColor.copy(colors[Math.floor(Math.random() * colors.length)]);
+    mesh.setColorAt(i, tmpColor);
     ages[i] = 0;
     lifespans[i] = 0.25 + Math.random() * 0.35;
-    velocities[i] = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.6,
-      Math.random() * 0.6 + 0.15,
-      (Math.random() - 0.5) * 0.6
-    );
+    velocities[i] = new THREE.Vector3((Math.random() - 0.5) * 0.6, Math.random() * 0.6 + 0.15, (Math.random() - 0.5) * 0.6);
   }
   for (let i = 0; i < count; i++) resetParticle(i);
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(colorsArr, 3));
-  const mat = new THREE.PointsMaterial({
-    size: particleSize,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.9,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    map: texture,
-  });
-  const points = new THREE.Points(geo, mat);
+  mesh.instanceColor.needsUpdate = true;
 
   function update(dt) {
     for (let i = 0; i < count; i++) {
       ages[i] += dt;
       if (ages[i] > lifespans[i]) resetParticle(i);
-      positions[i * 3 + 0] += velocities[i].x * dt;
-      positions[i * 3 + 1] += velocities[i].y * dt;
-      positions[i * 3 + 2] += velocities[i].z * dt;
+      positions[i].addScaledVector(velocities[i], dt);
+      dummy.position.copy(positions[i]);
+      dummy.scale.setScalar(particleSize);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
     }
-    geo.attributes.position.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
   }
-  return { points, update };
+  // kept the "points" property name so the four spell factories below
+  // (group.add(embers.points)) didn't need to change
+  return { points: mesh, update };
 }
 
 function createFireballVisual() {
@@ -524,7 +535,7 @@ function createFireballVisual() {
   const embers = createEmberSystem(
     20,
     [new THREE.Color(0xffee88), new THREE.Color(0xff8822), new THREE.Color(0xff3300)],
-    0.16, 0.075, pixelTexture
+    0.16, 0.075
   );
   group.add(embers.points);
   const light = new THREE.PointLight(0xff6622, 2.5, 4);
@@ -590,7 +601,7 @@ function createWindBladeVisual() {
     new THREE.MeshBasicMaterial({ color: 0x33ffdd, transparent: true, opacity: 0.9 })
   );
   group.add(core);
-  const embers = createEmberSystem(10, [new THREE.Color(0x33ffdd), new THREE.Color(0xaaffee)], 0.09, 0.055, pixelTexture);
+  const embers = createEmberSystem(10, [new THREE.Color(0x33ffdd), new THREE.Color(0xaaffee)], 0.09, 0.055);
   group.add(embers.points);
   const light = new THREE.PointLight(0x33ffdd, 1.2, 2.5);
   group.add(light);
@@ -614,7 +625,7 @@ function createManaBlastVisual() {
   const embers = createEmberSystem(
     18,
     [new THREE.Color(0xcc44ff), new THREE.Color(0xff4488), new THREE.Color(0x66ddff)],
-    0.15, 0.065, pixelTexture
+    0.15, 0.065
   );
   group.add(embers.points);
   const light = new THREE.PointLight(0xaa33ff, 2, 3.5);
@@ -638,7 +649,7 @@ function createWaterBlastVisual() {
   const embers = createEmberSystem(
     20,
     [new THREE.Color(0x66ccff), new THREE.Color(0xaaeeff), new THREE.Color(0xffffff)],
-    0.16, 0.07, pixelTexture
+    0.16, 0.07
   );
   group.add(embers.points);
   const light = new THREE.PointLight(0x3399ee, 2, 4);
@@ -668,12 +679,20 @@ const controller1 = renderer.xr.getController(1); // typically right
 dolly.add(controller0);
 dolly.add(controller1);
 
+let leftGamepad = null;
+let rightGamepad = null;
+controller0.addEventListener("connected", (e) => { if (e.data && e.data.gamepad) leftGamepad = e.data.gamepad; });
+controller0.addEventListener("disconnected", () => { leftGamepad = null; });
+controller1.addEventListener("connected", (e) => { if (e.data && e.data.gamepad) rightGamepad = e.data.gamepad; });
+controller1.addEventListener("disconnected", () => { rightGamepad = null; });
+
 // Blocky, deliberately non-human "GTA-style" hand: a flat palm slab with a
 // thumb and two thick stub fingers (pointer + ring), plus a short forearm
 // stub. No knuckles, no wrist taper -- just chunky low-poly primitives.
-function makeStylizedHand(color) {
+function makeStylizedHand(color, mirrored = false) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1 });
+  const side = mirrored ? -1 : 1; // flips which side the thumb/fingers sit on
 
   // Palm slab -- everything else attaches flush to one of its faces, no
   // rotated pieces anywhere, so the whole hand reads as square and tidy.
@@ -686,19 +705,19 @@ function makeStylizedHand(color) {
   // Pointer finger -- straight box extending forward off the palm, flush
   const pointerD = 0.1;
   const pointer = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, pointerD), mat);
-  pointer.position.set(0.018, 0.005, palmFrontZ - pointerD / 2);
+  pointer.position.set(0.018 * side, 0.005, palmFrontZ - pointerD / 2);
   group.add(pointer);
 
   // Ring finger -- same alignment, slightly shorter, straight and parallel
   const ringD = 0.08;
   const ring = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, ringD), mat);
-  ring.position.set(-0.018, 0.005, palmFrontZ - ringD / 2);
+  ring.position.set(-0.018 * side, 0.005, palmFrontZ - ringD / 2);
   group.add(ring);
 
   // Thumb -- straight box stub flush against the side of the palm, no angle
   const thumbW = 0.06;
   const thumb = new THREE.Mesh(new THREE.BoxGeometry(thumbW, 0.02, 0.03), mat);
-  thumb.position.set(palmW / 2 + thumbW / 2, -0.005, palm.position.z);
+  thumb.position.set(side * (palmW / 2 + thumbW / 2), -0.005, palm.position.z);
   group.add(thumb);
 
   return group;
@@ -706,8 +725,8 @@ function makeStylizedHand(color) {
 const SKIN_COLOR = 0xd9a066; // light "liger" tan for hands + face
 const FUR_COLOR = 0x6b4a30;  // brown fur for arms, torso, head
 
-controller0.add(makeStylizedHand(SKIN_COLOR));
-controller1.add(makeStylizedHand(SKIN_COLOR));
+controller0.add(makeStylizedHand(SKIN_COLOR, true));  // left hand -- mirrored
+controller1.add(makeStylizedHand(SKIN_COLOR, false)); // right hand
 
 // ---------------------------------------------------------------
 // AVATAR BODY: oval torso + box head, hangs below the camera so you
@@ -877,7 +896,44 @@ function updateMovement(dt) {
     dolly.position.y = FLOOR_Y;
     bodyVelocity.y = Math.max(bodyVelocity.y, 0);
   }
+}
 
+// ---------------------------------------------------------------
+// WALKING: standard left-thumbstick smooth locomotion, moving
+// relative to which way you're actually looking. This is on top of
+// (not instead of) the push-off flight above.
+// ---------------------------------------------------------------
+
+const MOVE_SPEED = 2.5; // meters/second
+const STICK_DEADZONE = 0.15;
+const worldForward = new THREE.Vector3();
+const worldRight = new THREE.Vector3();
+const UP_VEC = new THREE.Vector3(0, 1, 0);
+
+function getThumbstickAxes(gamepad) {
+  if (!gamepad || !gamepad.axes) return [0, 0];
+  // "xr-standard" gamepad mapping puts the thumbstick at axes[2]/[3];
+  // fall back to axes[0]/[1] for controllers that only expose those.
+  if (gamepad.axes.length >= 4) return [gamepad.axes[2], gamepad.axes[3]];
+  if (gamepad.axes.length >= 2) return [gamepad.axes[0], gamepad.axes[1]];
+  return [0, 0];
+}
+
+function updateLocomotion(dt) {
+  const [ax, ay] = getThumbstickAxes(leftGamepad);
+  if (Math.abs(ax) < STICK_DEADZONE && Math.abs(ay) < STICK_DEADZONE) return;
+
+  camera.getWorldDirection(worldForward);
+  worldForward.y = 0;
+  if (worldForward.lengthSq() < 0.0001) return;
+  worldForward.normalize();
+  worldRight.crossVectors(worldForward, UP_VEC).normalize();
+
+  dolly.position.addScaledVector(worldForward, -ay * MOVE_SPEED * dt); // stick forward = negative Y
+  dolly.position.addScaledVector(worldRight, ax * MOVE_SPEED * dt);
+}
+
+function clampToWorldBoundary() {
   // invisible wall -- keeps you on the grass, out of the forest/void beyond it
   if (dolly.position.x > WORLD_BOUNDARY) {
     dolly.position.x = WORLD_BOUNDARY;
@@ -896,111 +952,10 @@ function updateMovement(dt) {
 }
 
 // ---------------------------------------------------------------
-// GESTURE SPELLCASTING (right hand, hold grip to draw)
+// SPELLCASTING (right hand, one button per spell -- no drawing)
 // ---------------------------------------------------------------
 
-let isDrawing = false;
-let gesturePoints = []; // {x,y,z,t} in local dolly space
 const projectiles = [];
-
-// White trail showing the gesture as you draw it. Lives in the dolly, same
-// local space as gesturePoints, so no coordinate conversion is needed.
-const drawLineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
-const drawLine = new THREE.Line(new THREE.BufferGeometry(), drawLineMat);
-drawLine.frustumCulled = false;
-drawLine.visible = false;
-dolly.add(drawLine);
-
-controller1.addEventListener("squeezestart", () => {
-  isDrawing = true;
-  gesturePoints = [];
-  drawLine.visible = true;
-});
-controller1.addEventListener("squeezeend", () => {
-  isDrawing = false;
-  drawLine.visible = false;
-  const spell = classifyGesture(gesturePoints);
-  if (spell) castSpell(spell, controller1);
-});
-
-// Samples the path at even intervals and counts how many of those samples
-// have a sharp direction change -- a hand-drawn circle stays smooth (near
-// zero), while a triangle has a few distinct sharp corners.
-function countSharpCorners(points, angleThresholdDeg) {
-  if (points.length < 7) return 0;
-  const thresholdDot = Math.cos((angleThresholdDeg * Math.PI) / 180);
-  const step = Math.max(1, Math.floor(points.length / 16));
-  let corners = 0;
-  for (let i = step; i < points.length - step; i += step) {
-    const a = points[i - step], b = points[i], c = points[i + step];
-    const v1x = b.x - a.x, v1y = b.y - a.y, v1z = b.z - a.z;
-    const v2x = c.x - b.x, v2y = c.y - b.y, v2z = c.z - b.z;
-    const len1 = Math.hypot(v1x, v1y, v1z), len2 = Math.hypot(v2x, v2y, v2z);
-    if (len1 < 0.015 || len2 < 0.015) continue;
-    const dot = (v1x * v2x + v1y * v2y + v1z * v2z) / (len1 * len2);
-    if (dot < thresholdDot) corners++;
-  }
-  return corners;
-}
-
-function classifyGesture(points) {
-  if (points.length < 6) return null;
-
-  const start = points[0];
-  const end = points[points.length - 1];
-
-  let pathLength = 0;
-  for (let i = 1; i < points.length; i++) {
-    pathLength += Math.hypot(
-      points[i].x - points[i - 1].x,
-      points[i].y - points[i - 1].y,
-      points[i].z - points[i - 1].z
-    );
-  }
-  if (pathLength < 0.15) return null; // too small to count
-
-  // net straight-line displacement vs path length
-  const netDisplacement = Math.hypot(end.x - start.x, end.y - start.y, end.z - start.z);
-  const straightness = netDisplacement / pathLength; // ~1 = straight line, low = loopy/circular
-
-  // count vertical direction reversals (zigzag detector)
-  let reversals = 0;
-  let lastDir = 0;
-  for (let i = 1; i < points.length; i++) {
-    const dy = points[i].y - points[i - 1].y;
-    const dir = dy > 0.01 ? 1 : dy < -0.01 ? -1 : 0;
-    if (dir !== 0 && lastDir !== 0 && dir !== lastDir) reversals++;
-    if (dir !== 0) lastDir = dir;
-  }
-
-  if (reversals >= 3) return "lightning";
-
-  // Check the straight slash BEFORE the circle check. A genuine straight
-  // line naturally ends fairly close to where a small hand motion started,
-  // which used to satisfy the circle's "loop closes near start" test and
-  // get misclassified as a fireball -- checking straightness first fixes that.
-  if (straightness > 0.6) return "windblade";
-
-  // Closed loop: the path returns close to where it started. Could be a
-  // circle (fireball) or a triangle (mana blast) -- tell them apart by how
-  // many sharp corners the path has. Smooth loop = circle. A few sharp
-  // corners = triangle.
-  if (netDisplacement < pathLength * 0.35 && pathLength > 0.4 && straightness < 0.45) {
-    const corners = countSharpCorners(points, 50);
-    if (corners >= 2 && corners <= 6) return "manablast";
-    return "fireball";
-  }
-
-  // Water blast: a curvy, wavy motion that overall travels downward --
-  // distinct from lightning's sharp jagged zigzag (few gentle reversals,
-  // not a straight line, not a closed loop).
-  const verticalDrop = start.y - end.y;
-  if (verticalDrop > pathLength * 0.25 && straightness < 0.75 && reversals <= 2) {
-    return "waterblast";
-  }
-
-  return null; // unrecognized gesture -- cast nothing
-}
 
 const SPELL_INFO = {
   fireball: { speed: 6 },
@@ -1033,19 +988,28 @@ function castSpell(type, sourceController) {
   });
 }
 
-function updateGesture() {
-  if (!isDrawing) return;
-  const p = controller1.position;
-  gesturePoints.push({ x: p.x, y: p.y, z: p.z, t: performance.now() });
-  // keep only the last ~0.8 seconds of points
-  const cutoff = performance.now() - 800;
-  gesturePoints = gesturePoints.filter((pt) => pt.t >= cutoff);
+// "xr-standard" gamepad button mapping (Quest/Touch-style controllers):
+// 0 = trigger, 1 = grip, 3 = thumbstick click, 4 = A/X, 5 = B/Y
+const SPELL_BUTTONS = {
+  0: "fireball",
+  1: "windblade",
+  4: "lightning",
+  5: "manablast",
+  3: "waterblast",
+};
+const buttonWasPressed = {};
 
-  // redraw the white trail from the current point buffer
-  if (gesturePoints.length >= 2) {
-    const verts = gesturePoints.map((pt) => new THREE.Vector3(pt.x, pt.y, pt.z));
-    drawLine.geometry.dispose();
-    drawLine.geometry = new THREE.BufferGeometry().setFromPoints(verts);
+function updateSpellButtons() {
+  if (!rightGamepad) return;
+  for (const indexStr in SPELL_BUTTONS) {
+    const index = Number(indexStr);
+    const button = rightGamepad.buttons[index];
+    if (!button) continue;
+    const pressed = button.pressed;
+    if (pressed && !buttonWasPressed[index]) {
+      castSpell(SPELL_BUTTONS[index], controller1);
+    }
+    buttonWasPressed[index] = pressed;
   }
 }
 
@@ -1103,9 +1067,12 @@ renderer.setAnimationLoop(() => {
   lastTime = now;
 
   updateMovement(dt);
+  updateLocomotion(dt);
+  clampToWorldBoundary();
   updateAvatarBody();
-  updateGesture();
+  updateSpellButtons();
   updateProjectiles(dt);
+  updateMirror();
 
   renderer.render(scene, camera);
 });
