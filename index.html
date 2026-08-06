@@ -21,14 +21,14 @@
 
 <div id="info">
   <b>Elemental Clash — VR Prototype</b><br/>
-  <b>Left hand:</b> thumbstick to walk, or push off the ground/platforms to fly (no button needed, just shove your hand against a surface).<br/>
-  <b>Right hand:</b> press a button to cast.<br/>
-  &nbsp;&nbsp;• <b>Trigger</b> → Fireball<br/>
-  &nbsp;&nbsp;• <b>Grip</b> → Wind Blade<br/>
-  &nbsp;&nbsp;• <b>A / X button</b> → Lightning Bolt<br/>
-  &nbsp;&nbsp;• <b>B / Y button</b> → Mana Blast<br/>
-  &nbsp;&nbsp;• <b>Thumbstick click</b> → Water Blast<br/>
-  Hit the target dummy, or throw a spell into the blue portal and watch it exit the orange one.
+  <b>Left hand:</b> thumbstick to walk, and swing your sword for melee.<br/>
+  <b>Casting:</b> <b>A button</b> and <b>X button</b> each cast their equipped spell, both from the right hand.<br/>
+  <b>Right thumbstick click</b> opens the menu. While it's open, point the right controller and:<br/>
+  &nbsp;&nbsp;• <b>Trigger</b> a spell icon → pick it up<br/>
+  &nbsp;&nbsp;• <b>Trigger</b> a slot (A or X) → drop it there<br/>
+  &nbsp;&nbsp;• <b>Grip</b> → upgrade your sword (costs coins)<br/>
+  Walk into the <b>blue portal</b> to reach the graveyard. Kill zombies with your sword or spells --
+  they drop coins. Walk into the <b>green portal</b> there to come home.
 </div>
 
 <script type="importmap">
@@ -213,20 +213,8 @@ function makePathTexture() {
 }
 
 // ---------------------------------------------------------------
-// ENVIRONMENT: ground + floating platforms to push off from
+// ENVIRONMENT: ground
 // ---------------------------------------------------------------
-
-const surfaces = []; // anything you can push off of
-
-function makePlatform(x, y, z, w, h, d, color = 0x3a3a55) {
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x, y, z);
-  scene.add(mesh);
-  surfaces.push({ mesh, halfW: w / 2, halfH: h / 2, halfD: d / 2 });
-  return mesh;
-}
 
 // Ground -- grass everywhere, with a dirt path running down the center
 const groundGeo = new THREE.BoxGeometry(40, 0.5, 40);
@@ -234,19 +222,12 @@ const groundMat = new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roug
 const groundMesh = new THREE.Mesh(groundGeo, groundMat);
 groundMesh.position.set(0, -0.25, 0);
 scene.add(groundMesh);
-surfaces.push({ mesh: groundMesh, halfW: 20, halfH: 0.25, halfD: 20 });
 
 const pathMat = new THREE.MeshStandardMaterial({ map: makePathTexture(), roughness: 0.95 });
 const pathMesh = new THREE.Mesh(new THREE.PlaneGeometry(4, 40), pathMat);
 pathMesh.rotation.x = -Math.PI / 2;
 pathMesh.position.set(0, 0.002, 0); // just proud of the grass top so it doesn't z-fight
 scene.add(pathMesh);
-
-// A few floating rocks/platforms to push off midair
-makePlatform(4, 2, -3, 2, 0.4, 2, 0x4a4a6a);
-makePlatform(-4, 3.5, -5, 2, 0.4, 2, 0x4a4a6a);
-makePlatform(0, 5, -8, 2.5, 0.4, 2.5, 0x4a4a6a);
-makePlatform(6, 1, 2, 2, 0.4, 2, 0x4a4a6a);
 
 // ---------------------------------------------------------------
 // FLOWERS: simple low-poly cartoon flowers scattered on the grass,
@@ -368,7 +349,14 @@ scene.add(mirror);
 
 function updateMirror() {
   mirror.visible = false; // don't reflect the mirror's own plane
+  // CubeCamera.update() does 6 internal renders. If renderer.xr.enabled stays
+  // on during those, three.js pushes each intermediate render to the headset
+  // display for a fraction of a frame -- that's the strobing/flicker. Turning
+  // XR off for just this call makes those renders go to the cube target only.
+  const xrWasEnabled = renderer.xr.enabled;
+  renderer.xr.enabled = false;
   mirrorCubeCamera.update(renderer, scene);
+  renderer.xr.enabled = xrWasEnabled;
   mirror.visible = true;
 }
 
@@ -397,11 +385,11 @@ function makeSignTexture() {
   ctx.textAlign = "left";
   ctx.font = "bold 24px sans-serif";
   const lines = [
-    ["Trigger", "→  Fireball"],
-    ["Grip", "→  Wind Blade"],
-    ["A / X button", "→  Lightning Bolt"],
-    ["B / Y button", "→  Mana Blast"],
-    ["Thumbstick click", "→  Water Blast"],
+    ["A / X button", "→  cast (right hand)"],
+    ["Left hand", "→  swing sword"],
+    ["R-stick click", "→  open menu"],
+    ["  Point + trigger", "→  pick up / drop spell"],
+    ["  Grip", "→  upgrade sword"],
   ];
   let y = 106;
   for (const [gesture, spell] of lines) {
@@ -414,8 +402,8 @@ function makeSignTexture() {
 
   ctx.font = "18px sans-serif";
   ctx.fillStyle = "#e8d3a8";
-  ctx.fillText("Right hand: press a button to cast.", 36, h - 46);
-  ctx.fillText("Left stick: walk. Left hand: push to fly.", 36, h - 20);
+  ctx.fillText("Blue portal: graveyard. Kill zombies for coins.", 36, h - 46);
+  ctx.fillText("Left stick: walk.", 36, h - 20);
 
   const tex = new THREE.CanvasTexture(canvas);
   return tex;
@@ -474,8 +462,195 @@ function makePortal(x, y, z, color) {
   return ring;
 }
 
-const portalA = makePortal(-6, 1.2, -8, 0x3399ff); // blue - entrance
-const portalB = makePortal(6, 1.2, -8, 0xff9933);  // orange - exit
+const portalA = makePortal(-6, 1.2, -8, 0x3399ff); // blue - entrance -- also teleports the PLAYER to the graveyard
+const portalB = makePortal(6, 1.2, -8, 0xff9933);  // orange - exit (spell projectiles only)
+
+// ---------------------------------------------------------------
+// GRAVEYARD ZONE: a separate area off in the distance, reached by
+// walking into the blue portal. Has its own ground, tombstones,
+// zombies, boundary, and a return portal home.
+// ---------------------------------------------------------------
+
+const GRAVEYARD_CENTER = new THREE.Vector3(0, 0, -60);
+const GRAVEYARD_RADIUS = 14;
+const VILLAGE_SPAWN = new THREE.Vector3(-6, 0, -5); // where you land after returning
+
+const graveyardGroundMat = new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 1 });
+const graveyardGround = new THREE.Mesh(new THREE.CircleGeometry(GRAVEYARD_RADIUS + 2, 32), graveyardGroundMat);
+graveyardGround.rotation.x = -Math.PI / 2;
+graveyardGround.position.copy(GRAVEYARD_CENTER);
+graveyardGround.position.y = -0.24;
+scene.add(graveyardGround);
+
+function makeTombstone(x, z) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x555560, roughness: 0.9 });
+  const stone = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.5 + Math.random() * 0.25, 0.08), mat);
+  stone.position.set(GRAVEYARD_CENTER.x + x, stone.geometry.parameters.height / 2 - 0.24, GRAVEYARD_CENTER.z + z);
+  stone.rotation.y = Math.random() * 0.6 - 0.3;
+  stone.rotation.z = Math.random() * 0.1 - 0.05;
+  scene.add(stone);
+}
+for (let i = 0; i < 14; i++) {
+  const angle = Math.random() * Math.PI * 2;
+  const r = 2 + Math.random() * (GRAVEYARD_RADIUS - 3);
+  makeTombstone(Math.cos(angle) * r, Math.sin(angle) * r);
+}
+
+const returnPortal = makePortal(GRAVEYARD_CENTER.x, 1.2, GRAVEYARD_CENTER.z - GRAVEYARD_RADIUS + 2, 0x33ff88);
+
+let inGraveyard = false;
+let teleportCooldown = 0;
+
+function teleportPlayer(destination) {
+  dolly.position.set(destination.x, dolly.position.y, destination.z);
+  teleportCooldown = 1.5; // avoid immediately re-triggering the portal you just landed near
+}
+
+// ---------------------------------------------------------------
+// ZOMBIES: simple blocky enemies that wander/chase in the graveyard,
+// take hits from the sword or spells, and drop a coin on death.
+// ---------------------------------------------------------------
+
+const ZOMBIE_COUNT = 6;
+const zombies = [];
+const coins = [];
+
+function makeZombieMesh() {
+  const group = new THREE.Group();
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0x5a7a5a, roughness: 0.9 });
+  const clothMat = new THREE.MeshStandardMaterial({ color: 0x3a3a2a, roughness: 0.9 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff3333, emissive: 0xff0000, emissiveIntensity: 0.8 });
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.22), clothMat);
+  torso.position.y = 0.85;
+  group.add(torso);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 0.24), skinMat);
+  head.position.y = 1.22;
+  group.add(head);
+
+  const eyeGeo = new THREE.SphereGeometry(0.03, 8, 8);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.06, 1.22, -0.12);
+  group.add(eyeL);
+  const eyeR = eyeL.clone();
+  eyeR.position.x = 0.06;
+  group.add(eyeR);
+
+  const armGeo = new THREE.BoxGeometry(0.09, 0.4, 0.09);
+  const armL = new THREE.Mesh(armGeo, skinMat);
+  armL.position.set(-0.22, 0.85, 0);
+  group.add(armL);
+  const armR = armL.clone();
+  armR.position.x = 0.22;
+  group.add(armR);
+
+  const legGeo = new THREE.BoxGeometry(0.12, 0.45, 0.12);
+  const legL = new THREE.Mesh(legGeo, clothMat);
+  legL.position.set(-0.09, 0.35, 0);
+  group.add(legL);
+  const legR = legL.clone();
+  legR.position.x = 0.09;
+  group.add(legR);
+
+  return group;
+}
+
+function spawnZombie() {
+  const angle = Math.random() * Math.PI * 2;
+  const r = 3 + Math.random() * (GRAVEYARD_RADIUS - 4);
+  const mesh = makeZombieMesh();
+  mesh.position.set(GRAVEYARD_CENTER.x + Math.cos(angle) * r, 0, GRAVEYARD_CENTER.z + Math.sin(angle) * r);
+  scene.add(mesh);
+  zombies.push({ mesh, hp: 2, lastHit: 0, flashTimer: 0 });
+}
+for (let i = 0; i < ZOMBIE_COUNT; i++) spawnZombie();
+
+function makeCoinMesh() {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffd23d, emissive: 0x664400, emissiveIntensity: 0.4, metalness: 0.7, roughness: 0.3 });
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.025, 12), mat);
+  mesh.rotation.x = Math.PI / 2;
+  return mesh;
+}
+
+function killZombie(z) {
+  scene.remove(z.mesh);
+  const coinMesh = makeCoinMesh();
+  coinMesh.position.copy(z.mesh.position);
+  coinMesh.position.y = 0.3;
+  scene.add(coinMesh);
+  coins.push({ mesh: coinMesh });
+  zombies.splice(zombies.indexOf(z), 1);
+  setTimeout(spawnZombie, 3000); // keep the graveyard populated
+}
+
+const zombieToPlayer = new THREE.Vector3();
+function updateZombies(dt) {
+  const playerPos = dolly.position;
+  for (const z of zombies) {
+    zombieToPlayer.subVectors(playerPos, z.mesh.position);
+    zombieToPlayer.y = 0;
+    const dist = zombieToPlayer.length();
+    if (dist > 0.6 && dist < 9) {
+      zombieToPlayer.normalize();
+      z.mesh.position.addScaledVector(zombieToPlayer, 0.7 * dt);
+      z.mesh.rotation.y = Math.atan2(zombieToPlayer.x, zombieToPlayer.z);
+    }
+    if (z.flashTimer > 0) {
+      z.flashTimer -= dt;
+      if (z.flashTimer <= 0) z.mesh.children[0].material.color.set(0x3a3a2a);
+    }
+    if (z.lastHit > 0) z.lastHit -= dt;
+  }
+
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    c.mesh.rotation.z += dt * 2;
+    if (c.mesh.position.distanceTo(playerPos) < 1) {
+      coinCount += 1;
+      scene.remove(c.mesh);
+      coins.splice(i, 1);
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// SWORD HIT DETECTION: tracks the blade tip's world position and
+// swing speed; a fast-moving tip near a zombie counts as a hit.
+// ---------------------------------------------------------------
+
+const swordTipWorld = new THREE.Vector3();
+const swordTipPrev = new THREE.Vector3();
+let swordTipInit = false;
+const SWORD_HIT_RADIUS = 0.45;
+const SWORD_SWING_SPEED_MIN = 1.4; // m/s -- a still or slow-moving blade doesn't register a hit
+const SWORD_HIT_COOLDOWN = 0.4;
+
+function updateSwordHits(dt) {
+  swordGroup.localToWorld(swordTipWorld.copy(swordTipLocal));
+  if (!swordTipInit) {
+    swordTipPrev.copy(swordTipWorld);
+    swordTipInit = true;
+    return;
+  }
+  const swingSpeed = swordTipWorld.distanceTo(swordTipPrev) / Math.max(dt, 0.0001);
+  swordTipPrev.copy(swordTipWorld);
+  if (swingSpeed < SWORD_SWING_SPEED_MIN) return;
+
+  for (const z of zombies) {
+    if (z.lastHit > 0) continue;
+    const dx = swordTipWorld.x - z.mesh.position.x;
+    const dy = swordTipWorld.y - (z.mesh.position.y + 0.9);
+    const dz = swordTipWorld.z - z.mesh.position.z;
+    if (Math.sqrt(dx * dx + dy * dy + dz * dz) < SWORD_HIT_RADIUS) {
+      z.lastHit = SWORD_HIT_COOLDOWN;
+      z.hp -= 1;
+      z.mesh.children[0].material.color.set(0xff4444);
+      z.flashTimer = 0.15;
+      if (z.hp <= 0) killZombie(z);
+    }
+  }
+}
 
 // ---------------------------------------------------------------
 // SPELL VISUALS: glow sprites, particle trails, and a jagged
@@ -681,14 +856,32 @@ dolly.add(controller1);
 
 let leftGamepad = null;
 let rightGamepad = null;
-controller0.addEventListener("connected", (e) => { if (e.data && e.data.gamepad) leftGamepad = e.data.gamepad; });
-controller0.addEventListener("disconnected", () => { leftGamepad = null; });
-controller1.addEventListener("connected", (e) => { if (e.data && e.data.gamepad) rightGamepad = e.data.gamepad; });
-controller1.addEventListener("disconnected", () => { rightGamepad = null; });
+
+// Controller index (0 vs 1) isn't reliably left/right across browsers and
+// headsets -- read the actual reported handedness instead, falling back to
+// the index assumption only if handedness comes back unknown.
+function handleControllerConnected(e) {
+  if (!e.data || !e.data.gamepad) return;
+  if (e.data.handedness === "left") leftGamepad = e.data.gamepad;
+  else if (e.data.handedness === "right") rightGamepad = e.data.gamepad;
+  else if (e.target === controller0) leftGamepad = e.data.gamepad;
+  else rightGamepad = e.data.gamepad;
+}
+function handleControllerDisconnected(e) {
+  if (e.data && e.data.handedness === "left") leftGamepad = null;
+  else if (e.data && e.data.handedness === "right") rightGamepad = null;
+  else if (e.target === controller0) leftGamepad = null;
+  else rightGamepad = null;
+}
+controller0.addEventListener("connected", handleControllerConnected);
+controller0.addEventListener("disconnected", handleControllerDisconnected);
+controller1.addEventListener("connected", handleControllerConnected);
+controller1.addEventListener("disconnected", handleControllerDisconnected);
 
 // Blocky, deliberately non-human "GTA-style" hand: a flat palm slab with a
 // thumb and two thick stub fingers (pointer + ring), plus a short forearm
-// stub. No knuckles, no wrist taper -- just chunky low-poly primitives.
+// stub. Pointer and ring each pivot at their base so they can curl in with
+// the trigger/grip; the thumb stays fixed.
 function makeStylizedHand(color, mirrored = false) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1 });
@@ -702,31 +895,110 @@ function makeStylizedHand(color, mirrored = false) {
   group.add(palm);
   const palmFrontZ = palm.position.z - palmD / 2; // front (finger) face
 
-  // Pointer finger -- straight box extending forward off the palm, flush
+  // Pointer finger -- pivots at its base (curls with the trigger)
   const pointerD = 0.1;
+  const pointerPivot = new THREE.Group();
+  pointerPivot.position.set(0.018 * side, 0.005, palmFrontZ);
+  group.add(pointerPivot);
   const pointer = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, pointerD), mat);
-  pointer.position.set(0.018 * side, 0.005, palmFrontZ - pointerD / 2);
-  group.add(pointer);
+  pointer.position.set(0, 0, -pointerD / 2);
+  pointerPivot.add(pointer);
 
-  // Ring finger -- same alignment, slightly shorter, straight and parallel
+  // Ring finger -- pivots at its base (curls with the grip)
   const ringD = 0.08;
+  const ringPivot = new THREE.Group();
+  ringPivot.position.set(-0.018 * side, 0.005, palmFrontZ);
+  group.add(ringPivot);
   const ring = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, ringD), mat);
-  ring.position.set(-0.018 * side, 0.005, palmFrontZ - ringD / 2);
-  group.add(ring);
+  ring.position.set(0, 0, -ringD / 2);
+  ringPivot.add(ring);
 
-  // Thumb -- straight box stub flush against the side of the palm, no angle
+  // Thumb -- straight box stub flush against the side of the palm, static
   const thumbW = 0.06;
   const thumb = new THREE.Mesh(new THREE.BoxGeometry(thumbW, 0.02, 0.03), mat);
   thumb.position.set(side * (palmW / 2 + thumbW / 2), -0.005, palm.position.z);
   group.add(thumb);
 
-  return group;
+  return { group, pointerPivot, ringPivot };
 }
 const SKIN_COLOR = 0xd9a066; // light "liger" tan for hands + face
 const FUR_COLOR = 0x6b4a30;  // brown fur for arms, torso, head
 
-controller0.add(makeStylizedHand(SKIN_COLOR, true));  // left hand -- mirrored
-controller1.add(makeStylizedHand(SKIN_COLOR, false)); // right hand
+const leftHand = makeStylizedHand(SKIN_COLOR, true);   // left hand -- mirrored
+const rightHand = makeStylizedHand(SKIN_COLOR, false); // right hand
+controller0.add(leftHand.group);
+controller1.add(rightHand.group);
+
+// Curl amount (radians) when a button is fully pressed
+const FINGER_CURL_ANGLE = -1.1;
+function updateHandFingers() {
+  const lTrigger = leftGamepad && leftGamepad.buttons[0] ? leftGamepad.buttons[0].value : 0;
+  const lGrip = leftGamepad && leftGamepad.buttons[1] ? leftGamepad.buttons[1].value : 0;
+  const rTrigger = rightGamepad && rightGamepad.buttons[0] ? rightGamepad.buttons[0].value : 0;
+  const rGrip = rightGamepad && rightGamepad.buttons[1] ? rightGamepad.buttons[1].value : 0;
+
+  leftHand.pointerPivot.rotation.x = lTrigger * FINGER_CURL_ANGLE;
+  leftHand.ringPivot.rotation.x = lGrip * FINGER_CURL_ANGLE;
+  rightHand.pointerPivot.rotation.x = rTrigger * FINGER_CURL_ANGLE;
+  rightHand.ringPivot.rotation.x = rGrip * FINGER_CURL_ANGLE;
+}
+
+// ---------------------------------------------------------------
+// SWORD: lives in the left hand (melee only -- spells are all
+// right-hand now). Upgrades with coins earned from zombies.
+// ---------------------------------------------------------------
+
+const SWORD_TIERS = [
+  { name: "Basic Sword", length: 0.38, width: 0.05, thickness: 0.012, bladeColor: 0xaaaaaa, guardColor: 0x7a5a3a, cost: 8 },
+  { name: "Long Needle", length: 0.62, width: 0.022, thickness: 0.01, bladeColor: 0xd8d8e8, guardColor: 0x555566, cost: 16 },
+  { name: "Katana", length: 0.78, width: 0.04, thickness: 0.012, bladeColor: 0xf0e6b0, guardColor: 0xaa2222, cost: 0 }, // cost 0 = max tier, nothing next
+];
+
+let swordTier = 0;
+let coinCount = 0;
+let swordGroup = null;
+let swordTipLocal = new THREE.Vector3();
+
+function buildSwordMesh(tier) {
+  const spec = SWORD_TIERS[tier];
+  const group = new THREE.Group();
+
+  const bladeMat = new THREE.MeshStandardMaterial({ color: spec.bladeColor, metalness: 0.6, roughness: 0.3 });
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(spec.width, spec.thickness, spec.length), bladeMat);
+  blade.position.set(0, 0, -spec.length / 2 - 0.05); // extends forward from the grip
+  group.add(blade);
+
+  const guardMat = new THREE.MeshStandardMaterial({ color: spec.guardColor, metalness: 0.4, roughness: 0.5 });
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(spec.width * 3, spec.thickness * 2, 0.02), guardMat);
+  guard.position.set(0, 0, -0.03);
+  group.add(guard);
+
+  const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 8), new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.8 }));
+  hilt.rotation.x = Math.PI / 2;
+  hilt.position.set(0, 0, 0.03);
+  group.add(hilt);
+
+  group.userData.tipLocal = new THREE.Vector3(0, 0, -spec.length - 0.05); // blade tip, for hit detection
+  return group;
+}
+
+function equipSword(tier) {
+  swordTier = tier;
+  if (swordGroup) controller0.remove(swordGroup);
+  swordGroup = buildSwordMesh(tier);
+  controller0.add(swordGroup);
+  swordTipLocal.copy(swordGroup.userData.tipLocal);
+}
+equipSword(0);
+
+function upgradeSword() {
+  const spec = SWORD_TIERS[swordTier];
+  if (swordTier >= SWORD_TIERS.length - 1) return false; // already max tier
+  if (coinCount < spec.cost) return false;
+  coinCount -= spec.cost;
+  equipSword(swordTier + 1);
+  return true;
+}
 
 // ---------------------------------------------------------------
 // AVATAR BODY: oval torso + box head, hangs below the camera so you
@@ -823,87 +1095,12 @@ function updateAvatarBody() {
 }
 
 // ---------------------------------------------------------------
-// MOVEMENT: proximity-based push-off (no grip needed)
+// WALKING: left-thumbstick smooth locomotion, moving relative to
+// which way you're actually looking. This is the only movement
+// method -- dolly stays pinned to the floor, no flight/push-off.
 // ---------------------------------------------------------------
 
-const CONTACT_DISTANCE = 0.25;   // how close a hand needs to be to a surface to "touch" it
-const PUSH_STRENGTH = 9;         // how much a hand-push translates into body velocity
-const JITTER_DEADZONE = 0.004;   // ignore hand motion smaller than this per frame (tracking noise) --
-                                  // without this, just resting a hand near a surface (e.g. bracing
-                                  // on the floor while sitting) reads as tiny constant pushes and
-                                  // you drift/slide forever
-const GRAVITY = 9.8;
-const AIR_DAMPING = 0.98;        // velocity multiplier per frame while airborne
-const GROUND_DAMPING = 0.8;      // stronger velocity multiplier while a hand is touching a surface,
-                                  // so pushes settle down instead of skating across the ground
-const FLOOR_Y = 0;               // resting height for the dolly
-
-const handState = [
-  { controller: controller0, prevLocalPos: new THREE.Vector3(), wasContact: false },
-  { controller: controller1, prevLocalPos: new THREE.Vector3(), wasContact: false },
-];
-
-const bodyVelocity = new THREE.Vector3();
-const tmpWorldPos = new THREE.Vector3();
-
-function isNearAnySurface(worldPos) {
-  for (const s of surfaces) {
-    const dx = Math.abs(worldPos.x - s.mesh.position.x) - s.halfW;
-    const dy = Math.abs(worldPos.y - s.mesh.position.y) - s.halfH;
-    const dz = Math.abs(worldPos.z - s.mesh.position.z) - s.halfD;
-    // distance outside the box on each axis (negative = inside that axis range)
-    const outsideDist = Math.sqrt(Math.max(dx, 0) ** 2 + Math.max(dy, 0) ** 2 + Math.max(dz, 0) ** 2);
-    if (outsideDist < CONTACT_DISTANCE) return true;
-  }
-  return false;
-}
-
-function updateMovement(dt) {
-  let anyContact = false;
-
-  for (const hs of handState) {
-    hs.controller.getWorldPosition(tmpWorldPos);
-    const touching = isNearAnySurface(tmpWorldPos);
-    const localPos = hs.controller.position; // already local to dolly
-
-    if (touching) {
-      anyContact = true;
-      if (hs.wasContact) {
-        const handDelta = localPos.clone().sub(hs.prevLocalPos);
-        // ignore tiny jitter -- a hand resting near a surface shouldn't push you
-        if (handDelta.length() > JITTER_DEADZONE) {
-          const handVelocity = handDelta.multiplyScalar(1 / Math.max(dt, 0.0001));
-          bodyVelocity.addScaledVector(handVelocity, -PUSH_STRENGTH * dt);
-        }
-      }
-      hs.wasContact = true;
-    } else {
-      hs.wasContact = false;
-    }
-    hs.prevLocalPos.copy(localPos);
-  }
-
-  // Always integrate position, gravity and damping -- contact only changes
-  // how quickly velocity bleeds off, it never freezes the physics. This is
-  // what stops the endless sliding: velocity now always decays toward zero
-  // instead of only decaying during "free flight".
-  dolly.position.addScaledVector(bodyVelocity, dt);
-  bodyVelocity.y -= GRAVITY * dt;
-  bodyVelocity.multiplyScalar(anyContact ? GROUND_DAMPING : AIR_DAMPING);
-
-  // simple floor clamp so you don't fall forever
-  if (dolly.position.y < FLOOR_Y) {
-    dolly.position.y = FLOOR_Y;
-    bodyVelocity.y = Math.max(bodyVelocity.y, 0);
-  }
-}
-
-// ---------------------------------------------------------------
-// WALKING: standard left-thumbstick smooth locomotion, moving
-// relative to which way you're actually looking. This is on top of
-// (not instead of) the push-off flight above.
-// ---------------------------------------------------------------
-
+const FLOOR_Y = 0; // resting height for the dolly
 const MOVE_SPEED = 2.5; // meters/second
 const STICK_DEADZONE = 0.15;
 const worldForward = new THREE.Vector3();
@@ -920,6 +1117,8 @@ function getThumbstickAxes(gamepad) {
 }
 
 function updateLocomotion(dt) {
+  dolly.position.y = FLOOR_Y; // no flight/gravity -- always on the ground
+
   const [ax, ay] = getThumbstickAxes(leftGamepad);
   if (Math.abs(ax) < STICK_DEADZONE && Math.abs(ay) < STICK_DEADZONE) return;
 
@@ -934,28 +1133,53 @@ function updateLocomotion(dt) {
 }
 
 function clampToWorldBoundary() {
-  // invisible wall -- keeps you on the grass, out of the forest/void beyond it
-  if (dolly.position.x > WORLD_BOUNDARY) {
-    dolly.position.x = WORLD_BOUNDARY;
-    bodyVelocity.x = Math.min(bodyVelocity.x, 0);
-  } else if (dolly.position.x < -WORLD_BOUNDARY) {
-    dolly.position.x = -WORLD_BOUNDARY;
-    bodyVelocity.x = Math.max(bodyVelocity.x, 0);
+  // invisible wall -- keeps you inside whichever zone you're currently in
+  if (inGraveyard) {
+    const dx = dolly.position.x - GRAVEYARD_CENTER.x;
+    const dz = dolly.position.z - GRAVEYARD_CENTER.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist > GRAVEYARD_RADIUS) {
+      const scale = GRAVEYARD_RADIUS / dist;
+      dolly.position.x = GRAVEYARD_CENTER.x + dx * scale;
+      dolly.position.z = GRAVEYARD_CENTER.z + dz * scale;
+    }
+  } else {
+    dolly.position.x = Math.max(-WORLD_BOUNDARY, Math.min(WORLD_BOUNDARY, dolly.position.x));
+    dolly.position.z = Math.max(-WORLD_BOUNDARY, Math.min(WORLD_BOUNDARY, dolly.position.z));
   }
-  if (dolly.position.z > WORLD_BOUNDARY) {
-    dolly.position.z = WORLD_BOUNDARY;
-    bodyVelocity.z = Math.min(bodyVelocity.z, 0);
-  } else if (dolly.position.z < -WORLD_BOUNDARY) {
-    dolly.position.z = -WORLD_BOUNDARY;
-    bodyVelocity.z = Math.max(bodyVelocity.z, 0);
+}
+
+function horizontalDistance(a, b) {
+  const dx = a.x - b.x, dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
+function updatePortals(dt) {
+  if (teleportCooldown > 0) teleportCooldown -= dt;
+
+  if (teleportCooldown <= 0 && !inGraveyard && horizontalDistance(dolly.position, portalA.position) < 1.3) {
+    inGraveyard = true;
+    teleportPlayer(new THREE.Vector3(GRAVEYARD_CENTER.x, 0, GRAVEYARD_CENTER.z - GRAVEYARD_RADIUS + 3.5));
+  } else if (teleportCooldown <= 0 && inGraveyard && horizontalDistance(dolly.position, returnPortal.position) < 1.3) {
+    inGraveyard = false;
+    teleportPlayer(VILLAGE_SPAWN);
   }
 }
 
 // ---------------------------------------------------------------
-// SPELLCASTING (right hand, one button per spell -- no drawing)
+// SPELLCASTING: only two buttons actually cast -- A (right hand) and
+// X (left hand). Which spell each one casts is chosen from a menu.
 // ---------------------------------------------------------------
 
 const projectiles = [];
+
+const SPELL_LIST = [
+  { type: "fireball", name: "Fireball" },
+  { type: "windblade", name: "Wind Blade" },
+  { type: "lightning", name: "Lightning Bolt" },
+  { type: "manablast", name: "Mana Blast" },
+  { type: "waterblast", name: "Water Blast" },
+];
 
 const SPELL_INFO = {
   fireball: { speed: 6 },
@@ -988,28 +1212,262 @@ function castSpell(type, sourceController) {
   });
 }
 
+// ---------------------------------------------------------------
+// EQUIP MENU: a panel fixed in front of your view. Toggle it with the
+// right thumbstick click. While open, point the right controller at a
+// spell icon and pull the trigger to select it, then point at a slot
+// (A or X) and pull the trigger again to assign it there. While
+// closed, A and X just cast whatever they're equipped with.
+// ---------------------------------------------------------------
+
+let menuOpen = false;
+let selectedSpellType = null; // spell currently "picked up", waiting to be dropped on a slot
+let hoveredKey = null; // which icon/slot the controller is currently pointing at
+let currentMenuHit = null; // full hit info for whatever hoveredKey refers to
+const equippedSpells = { A: "fireball", X: "lightning" };
+
+const SPELL_COLORS = {
+  fireball: "#ff6633",
+  windblade: "#7be07b",
+  lightning: "#ffee55",
+  manablast: "#bb77ff",
+  waterblast: "#55bbff",
+};
+
+const menuCanvas = document.createElement("canvas");
+menuCanvas.width = 512;
+menuCanvas.height = 460;
+const menuCtx = menuCanvas.getContext("2d");
+const menuTexture = new THREE.CanvasTexture(menuCanvas);
+
+// Pixel-space rects (in canvas coordinates) for whatever redrawMenu() most
+// recently drew, so the raycast hit-test can be checked against them.
+const menuLayout = { icons: [], slotA: null, slotX: null };
+
+function redrawMenu() {
+  const w = menuCanvas.width, h = menuCanvas.height;
+  menuCtx.fillStyle = "#1a1a2a";
+  menuCtx.fillRect(0, 0, w, h);
+  menuCtx.strokeStyle = "#8899cc";
+  menuCtx.lineWidth = 6;
+  menuCtx.strokeRect(3, 3, w - 6, h - 6);
+
+  menuCtx.textAlign = "center";
+  menuCtx.fillStyle = "#ffffff";
+  menuCtx.font = "bold 30px sans-serif";
+  menuCtx.fillText("SPELLS", w / 2, 42);
+
+  // Icon row
+  menuLayout.icons = [];
+  const iconSize = 70, gap = 18;
+  const totalW = SPELL_LIST.length * iconSize + (SPELL_LIST.length - 1) * gap;
+  let ix = (w - totalW) / 2;
+  const iy = 64;
+  SPELL_LIST.forEach((spell) => {
+    const rect = { x: ix, y: iy, w: iconSize, h: iconSize, type: spell.type };
+    menuLayout.icons.push(rect);
+
+    const isSelected = selectedSpellType === spell.type;
+    const isHovered = hoveredKey === "icon:" + spell.type;
+
+    menuCtx.fillStyle = SPELL_COLORS[spell.type];
+    menuCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    menuCtx.lineWidth = isSelected ? 5 : (isHovered ? 3 : 1);
+    menuCtx.strokeStyle = isSelected ? "#ffffff" : (isHovered ? "#ffee88" : "#00000055");
+    menuCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+    menuCtx.fillStyle = "#111111";
+    menuCtx.font = "bold 13px sans-serif";
+    menuCtx.textAlign = "center";
+    menuCtx.fillText(spell.name.split(" ")[0], rect.x + rect.w / 2, rect.y + rect.h + 18);
+
+    ix += iconSize + gap;
+  });
+
+  // Slot row
+  const slotW = 210, slotH = 74, slotGap = 20;
+  const slotsTotalW = slotW * 2 + slotGap;
+  let sx = (w - slotsTotalW) / 2;
+  const sy = iy + iconSize + 44;
+
+  function drawSlot(label, spellType, x) {
+    const rect = { x, y: sy, w: slotW, h: slotH };
+    const isHovered = hoveredKey === "slot" + label;
+    menuCtx.fillStyle = "#26263a";
+    menuCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    menuCtx.lineWidth = isHovered ? 4 : 2;
+    menuCtx.strokeStyle = isHovered ? "#ffee88" : "#666688";
+    menuCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+    menuCtx.textAlign = "left";
+    menuCtx.fillStyle = "#aaaacc";
+    menuCtx.font = "bold 16px sans-serif";
+    menuCtx.fillText("SLOT " + label, rect.x + 12, rect.y + 24);
+
+    const spell = SPELL_LIST.find((s) => s.type === spellType);
+    menuCtx.fillStyle = spellType ? SPELL_COLORS[spellType] : "#444444";
+    menuCtx.fillRect(rect.x + 12, rect.y + 34, 28, 28);
+    menuCtx.fillStyle = "#ffffff";
+    menuCtx.font = "14px sans-serif";
+    menuCtx.fillText(spell ? spell.name : "empty", rect.x + 48, rect.y + 54);
+
+    return rect;
+  }
+  menuLayout.slotA = drawSlot("A", equippedSpells.A, sx);
+  menuLayout.slotX = drawSlot("X", equippedSpells.X, sx + slotW + slotGap);
+
+  menuCtx.textAlign = "left";
+  menuCtx.fillStyle = "#cccccc";
+  menuCtx.font = "15px sans-serif";
+  menuCtx.fillText(
+    selectedSpellType ? "Point + trigger a slot to equip it" : "Point + trigger a spell to select it",
+    30, sy + slotH + 26
+  );
+
+  // Sword / coins section
+  let y = sy + slotH + 58;
+  menuCtx.strokeStyle = "#444458";
+  menuCtx.lineWidth = 2;
+  menuCtx.beginPath();
+  menuCtx.moveTo(20, y - 22);
+  menuCtx.lineTo(w - 20, y - 22);
+  menuCtx.stroke();
+
+  const spec = SWORD_TIERS[swordTier];
+  menuCtx.fillStyle = "#ffffff";
+  menuCtx.font = "bold 20px sans-serif";
+  menuCtx.fillText(`Sword: ${spec.name}`, 30, y + 10);
+  menuCtx.textAlign = "right";
+  menuCtx.fillStyle = "#ffd23d";
+  menuCtx.fillText(`${coinCount} coins`, w - 30, y + 10);
+  menuCtx.textAlign = "left";
+
+  y += 34;
+  menuCtx.font = "15px sans-serif";
+  if (swordTier < SWORD_TIERS.length - 1) {
+    const next = SWORD_TIERS[swordTier + 1];
+    menuCtx.fillStyle = coinCount >= spec.cost ? "#77ff99" : "#999999";
+    menuCtx.fillText(`Grip: upgrade to ${next.name} (${spec.cost} coins)`, 30, y);
+  } else {
+    menuCtx.fillStyle = "#77ff99";
+    menuCtx.fillText("Sword fully upgraded!", 30, y);
+  }
+
+  menuTexture.needsUpdate = true;
+}
+redrawMenu();
+
+// Fixed to the camera so it's always right in front of you when open
+const menuPanel = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.9, 0.81),
+  new THREE.MeshBasicMaterial({ map: menuTexture, transparent: true })
+);
+menuPanel.position.set(0, 0, -1.3);
+menuPanel.visible = false;
+camera.add(menuPanel);
+
+// Thin pointer ray from the right controller, shown only while the menu is
+// open, used to aim at icons/slots on the panel.
+const menuPointerLine = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
+  new THREE.LineBasicMaterial({ color: 0xffee88 })
+);
+menuPointerLine.visible = false;
+controller1.add(menuPointerLine);
+
+const menuRaycaster = new THREE.Raycaster();
+const menuRayOrigin = new THREE.Vector3();
+const menuRayDir = new THREE.Vector3();
+const menuRayQuat = new THREE.Quaternion();
+
+function hitTestMenu(px, py) {
+  for (const rect of menuLayout.icons) {
+    if (px >= rect.x && px <= rect.x + rect.w && py >= rect.y && py <= rect.y + rect.h) {
+      return { key: "icon:" + rect.type, type: "icon", spellType: rect.type };
+    }
+  }
+  if (menuLayout.slotA && px >= menuLayout.slotA.x && px <= menuLayout.slotA.x + menuLayout.slotA.w && py >= menuLayout.slotA.y && py <= menuLayout.slotA.y + menuLayout.slotA.h) {
+    return { key: "slotA", type: "slot", slot: "A" };
+  }
+  if (menuLayout.slotX && px >= menuLayout.slotX.x && px <= menuLayout.slotX.x + menuLayout.slotX.w && py >= menuLayout.slotX.y && py <= menuLayout.slotX.y + menuLayout.slotX.h) {
+    return { key: "slotX", type: "slot", slot: "X" };
+  }
+  return null;
+}
+
+function updateMenuPointer() {
+  if (!menuOpen) {
+    menuPointerLine.visible = false;
+    currentMenuHit = null;
+    return;
+  }
+  menuPointerLine.visible = true;
+
+  menuRayOrigin.setFromMatrixPosition(controller1.matrixWorld);
+  controller1.getWorldQuaternion(menuRayQuat);
+  menuRayDir.set(0, 0, -1).applyQuaternion(menuRayQuat);
+  menuRaycaster.set(menuRayOrigin, menuRayDir);
+
+  const hits = menuRaycaster.intersectObject(menuPanel, false);
+  let newHit = null;
+  let rayLength = 3;
+  if (hits.length > 0 && hits[0].uv) {
+    rayLength = hits[0].distance;
+    const px = hits[0].uv.x * menuCanvas.width;
+    const py = (1 - hits[0].uv.y) * menuCanvas.height;
+    newHit = hitTestMenu(px, py);
+  }
+  menuPointerLine.scale.z = rayLength;
+
+  const newKey = newHit ? newHit.key : null;
+  if (newKey !== hoveredKey) {
+    hoveredKey = newKey;
+    currentMenuHit = newHit;
+    redrawMenu();
+  }
+}
+
 // "xr-standard" gamepad button mapping (Quest/Touch-style controllers):
 // 0 = trigger, 1 = grip, 3 = thumbstick click, 4 = A/X, 5 = B/Y
-const SPELL_BUTTONS = {
-  0: "fireball",
-  1: "windblade",
-  4: "lightning",
-  5: "manablast",
-  3: "waterblast",
-};
 const buttonWasPressed = {};
+function wasJustPressed(gamepad, index, key) {
+  if (!gamepad || !gamepad.buttons[index]) {
+    buttonWasPressed[key] = false;
+    return false;
+  }
+  const pressed = gamepad.buttons[index].pressed;
+  const was = buttonWasPressed[key] || false;
+  buttonWasPressed[key] = pressed;
+  return pressed && !was;
+}
 
-function updateSpellButtons() {
-  if (!rightGamepad) return;
-  for (const indexStr in SPELL_BUTTONS) {
-    const index = Number(indexStr);
-    const button = rightGamepad.buttons[index];
-    if (!button) continue;
-    const pressed = button.pressed;
-    if (pressed && !buttonWasPressed[index]) {
-      castSpell(SPELL_BUTTONS[index], controller1);
+function updateMenuAndCasting() {
+  if (wasJustPressed(rightGamepad, 3, "R3")) { // right thumbstick click -- toggle menu
+    menuOpen = !menuOpen;
+    menuPanel.visible = menuOpen;
+    if (!menuOpen) { selectedSpellType = null; hoveredKey = null; currentMenuHit = null; }
+    redrawMenu();
+  }
+
+  updateMenuPointer();
+
+  if (menuOpen) {
+    if (wasJustPressed(rightGamepad, 0, "R0") && currentMenuHit) { // trigger -- click whatever's aimed at
+      if (currentMenuHit.type === "icon") {
+        selectedSpellType = selectedSpellType === currentMenuHit.spellType ? null : currentMenuHit.spellType;
+      } else if (currentMenuHit.type === "slot" && selectedSpellType) {
+        equippedSpells[currentMenuHit.slot] = selectedSpellType;
+        selectedSpellType = null;
+      }
+      redrawMenu();
     }
-    buttonWasPressed[index] = pressed;
+    if (wasJustPressed(rightGamepad, 1, "R1")) { // right grip -- upgrade sword
+      upgradeSword();
+      redrawMenu();
+    }
+  } else {
+    if (wasJustPressed(rightGamepad, 4, "R4")) castSpell(equippedSpells.A, controller1); // both slots cast from the right hand
+    if (wasJustPressed(leftGamepad, 4, "L4")) castSpell(equippedSpells.X, controller1);
   }
 }
 
@@ -1039,6 +1497,22 @@ function updateProjectiles(dt) {
       continue;
     }
 
+    // zombie hit check
+    let hitZombie = false;
+    for (const z of zombies) {
+      if (p.group.position.distanceTo(z.mesh.position.clone().add(new THREE.Vector3(0, 0.9, 0))) < 0.55) {
+        z.hp -= 1;
+        z.mesh.children[0].material.color.set(0xff4444);
+        z.flashTimer = 0.15;
+        if (z.hp <= 0) killZombie(z);
+        scene.remove(p.group);
+        projectiles.splice(i, 1);
+        hitZombie = true;
+        break;
+      }
+    }
+    if (hitZombie) continue;
+
     if (p.life <= 0) {
       scene.remove(p.group);
       projectiles.splice(i, 1);
@@ -1066,11 +1540,14 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
-  updateMovement(dt);
   updateLocomotion(dt);
+  updatePortals(dt);
   clampToWorldBoundary();
   updateAvatarBody();
-  updateSpellButtons();
+  updateHandFingers();
+  updateMenuAndCasting();
+  updateSwordHits(dt);
+  updateZombies(dt);
   updateProjectiles(dt);
   updateMirror();
 
