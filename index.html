@@ -22,7 +22,7 @@
 <div id="info">
   <b>Elemental Clash — VR Prototype</b><br/>
   <b>Left hand:</b> thumbstick to walk, and swing your sword for melee.<br/>
-  <b>Casting:</b> <b>A button</b> and <b>X button</b> each cast their equipped spell, both from the right hand.<br/>
+  <b>Casting:</b> <b>A button</b> and <b>B button</b> each cast their equipped spell, both from the right hand.<br/>
   <b>Right thumbstick click</b> opens the menu. While it's open, point the right controller and:<br/>
   &nbsp;&nbsp;• <b>Trigger</b> a spell icon → pick it up<br/>
   &nbsp;&nbsp;• <b>Trigger</b> a slot (A or X) → drop it there<br/>
@@ -319,48 +319,6 @@ for (let i = 0; i < 100; i++) {
 }
 
 // ---------------------------------------------------------------
-// MIRROR: real-time reflection near spawn so you can see yourself
-// ---------------------------------------------------------------
-
-const mirrorFrame = new THREE.Mesh(
-  new THREE.BoxGeometry(3.2, 2.4, 0.08),
-  new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.5 })
-);
-mirrorFrame.position.set(0, 1.2, 3.4);
-scene.add(mirrorFrame);
-
-// three.js's Reflector doesn't render correctly under WebXR's stereo
-// (two-eye) camera, so the mirror uses a CubeCamera instead -- it renders
-// a normal 6-face cubemap each frame from a fixed point, independent of
-// which eye is currently drawing, and that gets used as a reflection map.
-// It's not a perfect flat mirror (more like a curved/chrome reflection),
-// but it reflects you and the scene correctly in both eyes.
-const mirrorRenderTarget = new THREE.WebGLCubeRenderTarget(256);
-const mirrorCubeCamera = new THREE.CubeCamera(0.1, 60, mirrorRenderTarget);
-mirrorCubeCamera.position.set(0, 1.2, 3.3);
-scene.add(mirrorCubeCamera);
-
-const mirror = new THREE.Mesh(
-  new THREE.PlaneGeometry(3, 2.2),
-  new THREE.MeshStandardMaterial({ envMap: mirrorRenderTarget.texture, roughness: 0.05, metalness: 1 })
-);
-mirror.position.set(0, 1.2, 3.38); // just in front of the frame, facing the spawn point at z=5
-scene.add(mirror);
-
-function updateMirror() {
-  mirror.visible = false; // don't reflect the mirror's own plane
-  // CubeCamera.update() does 6 internal renders. If renderer.xr.enabled stays
-  // on during those, three.js pushes each intermediate render to the headset
-  // display for a fraction of a frame -- that's the strobing/flicker. Turning
-  // XR off for just this call makes those renders go to the cube target only.
-  const xrWasEnabled = renderer.xr.enabled;
-  renderer.xr.enabled = false;
-  mirrorCubeCamera.update(renderer, scene);
-  renderer.xr.enabled = xrWasEnabled;
-  mirror.visible = true;
-}
-
-// ---------------------------------------------------------------
 // SPELL SIGN: a signpost near spawn listing each gesture -> spell
 // ---------------------------------------------------------------
 
@@ -385,7 +343,7 @@ function makeSignTexture() {
   ctx.textAlign = "left";
   ctx.font = "bold 24px sans-serif";
   const lines = [
-    ["A / X button", "→  cast (right hand)"],
+    ["A / B button", "→  cast (right hand)"],
     ["Left hand", "→  swing sword"],
     ["R-stick click", "→  open menu"],
     ["  Point + trigger", "→  pick up / drop spell"],
@@ -878,48 +836,91 @@ controller0.addEventListener("disconnected", handleControllerDisconnected);
 controller1.addEventListener("connected", handleControllerConnected);
 controller1.addEventListener("disconnected", handleControllerDisconnected);
 
-// Blocky, deliberately non-human "GTA-style" hand: a flat palm slab with a
-// thumb and two thick stub fingers (pointer + ring), plus a short forearm
-// stub. Pointer and ring each pivot at their base so they can curl in with
-// the trigger/grip; the thumb stays fixed.
+// Blocky, deliberately non-human "GTA-style" hand -- now with a bit more
+// shape: a palm slab with a raised back-of-hand ridge, a wrist cuff where
+// it meets the arm, two-segment pointer/ring fingers (each with a fingertip
+// pad) that curl at both joints with the trigger/grip, and a two-piece
+// angled thumb. Still no rounded edges anywhere -- chunky low-poly on purpose.
 function makeStylizedHand(color, mirrored = false) {
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1 });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.08 });
+  const capMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.72).getHex(), roughness: 0.5, metalness: 0.08 });
+  const cuffMat = new THREE.MeshStandardMaterial({ color: 0x2a1d12, roughness: 0.85 });
   const side = mirrored ? -1 : 1; // flips which side the thumb/fingers sit on
 
-  // Palm slab -- everything else attaches flush to one of its faces, no
-  // rotated pieces anywhere, so the whole hand reads as square and tidy.
+  // Palm slab -- everything else attaches flush to one of its faces
   const palmW = 0.08, palmH = 0.03, palmD = 0.09;
   const palm = new THREE.Mesh(new THREE.BoxGeometry(palmW, palmH, palmD), mat);
   palm.position.set(0, 0, -0.02);
   group.add(palm);
   const palmFrontZ = palm.position.z - palmD / 2; // front (finger) face
 
-  // Pointer finger -- pivots at its base (curls with the trigger)
-  const pointerD = 0.1;
-  const pointerPivot = new THREE.Group();
-  pointerPivot.position.set(0.018 * side, 0.005, palmFrontZ);
-  group.add(pointerPivot);
-  const pointer = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, pointerD), mat);
-  pointer.position.set(0, 0, -pointerD / 2);
-  pointerPivot.add(pointer);
+  // Back-of-hand ridge -- slightly raised, gives the palm some depth
+  const ridge = new THREE.Mesh(new THREE.BoxGeometry(palmW * 0.75, 0.012, palmD * 0.7), mat);
+  ridge.position.set(0, palmH / 2 + 0.006, palm.position.z + 0.005);
+  group.add(ridge);
 
-  // Ring finger -- pivots at its base (curls with the grip)
-  const ringD = 0.08;
-  const ringPivot = new THREE.Group();
-  ringPivot.position.set(-0.018 * side, 0.005, palmFrontZ);
-  group.add(ringPivot);
-  const ring = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, ringD), mat);
-  ring.position.set(0, 0, -ringD / 2);
-  ringPivot.add(ring);
+  // Wrist cuff -- dark band marking where the hand meets the arm
+  const cuff = new THREE.Mesh(new THREE.BoxGeometry(palmW * 1.15, palmH * 1.3, 0.025), cuffMat);
+  cuff.position.set(0, 0, palm.position.z + palmD / 2 + 0.006);
+  group.add(cuff);
 
-  // Thumb -- straight box stub flush against the side of the palm, static
-  const thumbW = 0.06;
-  const thumb = new THREE.Mesh(new THREE.BoxGeometry(thumbW, 0.02, 0.03), mat);
-  thumb.position.set(side * (palmW / 2 + thumbW / 2), -0.005, palm.position.z);
-  group.add(thumb);
+  // Two-segment finger builder -- pivots at the base (curls with a button)
+  // and again at the knuckle (curls further, for a more natural bend)
+  function makeFinger(xOffset, length) {
+    const pivot = new THREE.Group();
+    pivot.position.set(xOffset, 0.005, palmFrontZ);
+    const proxLen = length * 0.58, distLen = length * 0.42;
 
-  return { group, pointerPivot, ringPivot };
+    const proximal = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, proxLen), mat);
+    proximal.position.set(0, 0, -proxLen / 2);
+    pivot.add(proximal);
+
+    const distalPivot = new THREE.Group();
+    distalPivot.position.set(0, 0, -proxLen);
+    pivot.add(distalPivot);
+
+    const distal = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, distLen), mat);
+    distal.position.set(0, 0, -distLen / 2);
+    distalPivot.add(distal);
+
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.021, 0.021, 0.014), capMat);
+    tip.position.set(0, 0, -distLen - 0.007);
+    distalPivot.add(tip);
+
+    return { pivot, distalPivot };
+  }
+
+  const pointerFinger = makeFinger(0.018 * side, 0.1);
+  group.add(pointerFinger.pivot);
+  const ringFinger = makeFinger(-0.018 * side, 0.08);
+  group.add(ringFinger.pivot);
+
+  // Knuckle bumps -- small raised caps where each finger meets the palm,
+  // breaks up the flat slab silhouette a bit
+  const knucklePointer = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.016, 0.016), capMat);
+  knucklePointer.position.set(0.018 * side, 0.012, palmFrontZ + 0.006);
+  group.add(knucklePointer);
+  const knuckleRing = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.016, 0.016), capMat);
+  knuckleRing.position.set(-0.018 * side, 0.012, palmFrontZ + 0.006);
+  group.add(knuckleRing);
+
+  // Thumb -- two angled segments for a more natural static bend, no curl
+  const thumbBase = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.022, 0.03), mat);
+  thumbBase.position.set(side * (palmW / 2 + 0.02), -0.003, palm.position.z + 0.01);
+  group.add(thumbBase);
+  const thumbTip = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.02, 0.026), capMat);
+  thumbTip.position.set(side * (palmW / 2 + 0.045), -0.006, palm.position.z - 0.012);
+  thumbTip.rotation.y = side * 0.35;
+  group.add(thumbTip);
+
+  return {
+    group,
+    pointerPivot: pointerFinger.pivot,
+    pointerDistal: pointerFinger.distalPivot,
+    ringPivot: ringFinger.pivot,
+    ringDistal: ringFinger.distalPivot,
+  };
 }
 const SKIN_COLOR = 0xd9a066; // light "liger" tan for hands + face
 const FUR_COLOR = 0x6b4a30;  // brown fur for arms, torso, head
@@ -929,8 +930,10 @@ const rightHand = makeStylizedHand(SKIN_COLOR, false); // right hand
 controller0.add(leftHand.group);
 controller1.add(rightHand.group);
 
-// Curl amount (radians) when a button is fully pressed
+// Curl amount (radians) when a button is fully pressed. The knuckle joint
+// curls further than the base joint for a more natural closing motion.
 const FINGER_CURL_ANGLE = -1.1;
+const FINGER_CURL_KNUCKLE_MULT = 1.3;
 function updateHandFingers() {
   const lTrigger = leftGamepad && leftGamepad.buttons[0] ? leftGamepad.buttons[0].value : 0;
   const lGrip = leftGamepad && leftGamepad.buttons[1] ? leftGamepad.buttons[1].value : 0;
@@ -938,9 +941,13 @@ function updateHandFingers() {
   const rGrip = rightGamepad && rightGamepad.buttons[1] ? rightGamepad.buttons[1].value : 0;
 
   leftHand.pointerPivot.rotation.x = lTrigger * FINGER_CURL_ANGLE;
+  leftHand.pointerDistal.rotation.x = lTrigger * FINGER_CURL_ANGLE * FINGER_CURL_KNUCKLE_MULT;
   leftHand.ringPivot.rotation.x = lGrip * FINGER_CURL_ANGLE;
+  leftHand.ringDistal.rotation.x = lGrip * FINGER_CURL_ANGLE * FINGER_CURL_KNUCKLE_MULT;
   rightHand.pointerPivot.rotation.x = rTrigger * FINGER_CURL_ANGLE;
+  rightHand.pointerDistal.rotation.x = rTrigger * FINGER_CURL_ANGLE * FINGER_CURL_KNUCKLE_MULT;
   rightHand.ringPivot.rotation.x = rGrip * FINGER_CURL_ANGLE;
+  rightHand.ringDistal.rotation.x = rGrip * FINGER_CURL_ANGLE * FINGER_CURL_KNUCKLE_MULT;
 }
 
 // ---------------------------------------------------------------
@@ -963,22 +970,76 @@ function buildSwordMesh(tier) {
   const spec = SWORD_TIERS[tier];
   const group = new THREE.Group();
 
-  const bladeMat = new THREE.MeshStandardMaterial({ color: spec.bladeColor, metalness: 0.6, roughness: 0.3 });
+  const bladeMat = new THREE.MeshStandardMaterial({ color: spec.bladeColor, metalness: 0.75, roughness: 0.22 });
+
+  // Main blade -- flat bar with a shallow center fuller (groove) for detail
   const blade = new THREE.Mesh(new THREE.BoxGeometry(spec.width, spec.thickness, spec.length), bladeMat);
-  blade.position.set(0, 0, -spec.length / 2 - 0.05); // extends forward from the grip
+  blade.position.set(0, 0, -spec.length / 2 - 0.05);
   group.add(blade);
 
-  const guardMat = new THREE.MeshStandardMaterial({ color: spec.guardColor, metalness: 0.4, roughness: 0.5 });
-  const guard = new THREE.Mesh(new THREE.BoxGeometry(spec.width * 3, spec.thickness * 2, 0.02), guardMat);
-  guard.position.set(0, 0, -0.03);
-  group.add(guard);
+  const fuller = new THREE.Mesh(
+    new THREE.BoxGeometry(spec.width * 0.22, spec.thickness * 1.2, spec.length * 0.82),
+    bladeMat
+  );
+  fuller.position.copy(blade.position);
+  group.add(fuller);
 
-  const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 8), new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.8 }));
-  hilt.rotation.x = Math.PI / 2;
-  hilt.position.set(0, 0, 0.03);
-  group.add(hilt);
+  // Edge highlight -- a thin bright strip along one side of the blade, reads
+  // as a sharpened cutting edge catching the light
+  const edgeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.9, roughness: 0.12 });
+  const edge = new THREE.Mesh(
+    new THREE.BoxGeometry(spec.width * 0.05, spec.thickness * 1.3, spec.length * 0.92),
+    edgeMat
+  );
+  edge.position.set(spec.width * 0.46, 0, blade.position.z);
+  group.add(edge);
 
-  group.userData.tipLocal = new THREE.Vector3(0, 0, -spec.length - 0.05); // blade tip, for hit detection
+  // Top-tier swords get a faint glow -- makes the upgrade progression read
+  // as genuinely special, not just a palette swap
+  if (tier === SWORD_TIERS.length - 1) {
+    const glow = new THREE.PointLight(spec.bladeColor, 0.5, 0.5);
+    glow.position.copy(blade.position);
+    group.add(glow);
+  }
+
+  // Pointed tip -- a 4-sided pyramid, blocky to match the rest of the aesthetic
+  const tipLen = spec.length * 0.18;
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(spec.width * 0.72, tipLen, 4), bladeMat);
+  tip.rotation.x = -Math.PI / 2;
+  tip.rotation.y = Math.PI / 4;
+  tip.position.set(0, 0, -spec.length - 0.05 - tipLen / 2 + 0.02);
+  group.add(tip);
+
+  // Crossguard -- a wide bar plus a short perpendicular accent for a true
+  // cross shape instead of a single flat block
+  const guardMat = new THREE.MeshStandardMaterial({ color: spec.guardColor, metalness: 0.5, roughness: 0.4 });
+  const guardBar = new THREE.Mesh(new THREE.BoxGeometry(spec.width * 4.5, spec.thickness * 1.8, 0.022), guardMat);
+  guardBar.position.set(0, 0, -0.032);
+  group.add(guardBar);
+  const guardAccent = new THREE.Mesh(new THREE.BoxGeometry(spec.width * 1.4, spec.thickness * 4, 0.018), guardMat);
+  guardAccent.position.set(0, 0, -0.028);
+  group.add(guardAccent);
+
+  // Grip -- cylinder with a few thin wrap bands for texture
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.85 });
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.09, 8), gripMat);
+  grip.rotation.x = Math.PI / 2;
+  grip.position.set(0, 0, 0.035);
+  group.add(grip);
+  const wrapMat = new THREE.MeshStandardMaterial({ color: 0x1c1208, roughness: 0.9 });
+  for (let i = -1; i <= 1; i++) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.0035, 6, 12), wrapMat);
+    band.position.set(0, 0, 0.035 + i * 0.025);
+    group.add(band);
+  }
+
+  // Pommel -- small weighted cap at the very end of the grip
+  const pommel = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.03), guardMat);
+  pommel.rotation.y = Math.PI / 4;
+  pommel.position.set(0, 0, 0.085);
+  group.add(pommel);
+
+  group.userData.tipLocal = new THREE.Vector3(0, 0, -spec.length - 0.05 - tipLen); // blade tip, for hit detection
   return group;
 }
 
@@ -1224,7 +1285,7 @@ let menuOpen = false;
 let selectedSpellType = null; // spell currently "picked up", waiting to be dropped on a slot
 let hoveredKey = null; // which icon/slot the controller is currently pointing at
 let currentMenuHit = null; // full hit info for whatever hoveredKey refers to
-const equippedSpells = { A: "fireball", X: "lightning" };
+const equippedSpells = { A: "fireball", B: "lightning" };
 
 const SPELL_COLORS = {
   fireball: "#ff6633",
@@ -1242,18 +1303,53 @@ const menuTexture = new THREE.CanvasTexture(menuCanvas);
 
 // Pixel-space rects (in canvas coordinates) for whatever redrawMenu() most
 // recently drew, so the raycast hit-test can be checked against them.
-const menuLayout = { icons: [], slotA: null, slotX: null };
+const menuLayout = { icons: [], slotA: null, slotB: null };
+
+// Deterministic wood-grain fill (no Math.random -- the menu redraws on every
+// hover change, and a randomized grain would visibly jump each time)
+function drawWoodBackground(ctx, w, h) {
+  const grad = ctx.createLinearGradient(0, 0, w, 0);
+  grad.addColorStop(0, "#6b4423");
+  grad.addColorStop(0.5, "#7a5230");
+  grad.addColorStop(1, "#63401f");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  const streaks = 30;
+  for (let i = 0; i < streaks; i++) {
+    const y = (i / streaks) * h + Math.sin(i * 12.9) * 4;
+    ctx.strokeStyle = i % 2 === 0 ? "#40260f" : "#8a6238";
+    ctx.lineWidth = 1 + (i % 3);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= w; x += 24) {
+      ctx.lineTo(x, y + Math.sin(x * 0.02 + i * 3.1) * 3);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.2, w / 2, h / 2, h * 0.75);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.35)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+}
 
 function redrawMenu() {
   const w = menuCanvas.width, h = menuCanvas.height;
-  menuCtx.fillStyle = "#1a1a2a";
-  menuCtx.fillRect(0, 0, w, h);
-  menuCtx.strokeStyle = "#8899cc";
-  menuCtx.lineWidth = 6;
-  menuCtx.strokeRect(3, 3, w - 6, h - 6);
+  drawWoodBackground(menuCtx, w, h);
+  menuCtx.strokeStyle = "#2e1c0c";
+  menuCtx.lineWidth = 10;
+  menuCtx.strokeRect(5, 5, w - 10, h - 10);
+  menuCtx.strokeStyle = "#c9a463";
+  menuCtx.lineWidth = 2;
+  menuCtx.strokeRect(13, 13, w - 26, h - 26);
 
   menuCtx.textAlign = "center";
-  menuCtx.fillStyle = "#ffffff";
+  menuCtx.fillStyle = "#f7e9c8";
   menuCtx.font = "bold 30px sans-serif";
   menuCtx.fillText("SPELLS", w / 2, 42);
 
@@ -1273,7 +1369,7 @@ function redrawMenu() {
     menuCtx.fillStyle = SPELL_COLORS[spell.type];
     menuCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
     menuCtx.lineWidth = isSelected ? 5 : (isHovered ? 3 : 1);
-    menuCtx.strokeStyle = isSelected ? "#ffffff" : (isHovered ? "#ffee88" : "#00000055");
+    menuCtx.strokeStyle = isSelected ? "#fff2d0" : (isHovered ? "#ffdd66" : "#2e1c0c88");
     menuCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
 
     menuCtx.fillStyle = "#111111";
@@ -1293,31 +1389,31 @@ function redrawMenu() {
   function drawSlot(label, spellType, x) {
     const rect = { x, y: sy, w: slotW, h: slotH };
     const isHovered = hoveredKey === "slot" + label;
-    menuCtx.fillStyle = "#26263a";
+    menuCtx.fillStyle = "#3a2610";
     menuCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
     menuCtx.lineWidth = isHovered ? 4 : 2;
-    menuCtx.strokeStyle = isHovered ? "#ffee88" : "#666688";
+    menuCtx.strokeStyle = isHovered ? "#ffdd66" : "#8a6238";
     menuCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
 
     menuCtx.textAlign = "left";
-    menuCtx.fillStyle = "#aaaacc";
+    menuCtx.fillStyle = "#e8cf9e";
     menuCtx.font = "bold 16px sans-serif";
     menuCtx.fillText("SLOT " + label, rect.x + 12, rect.y + 24);
 
     const spell = SPELL_LIST.find((s) => s.type === spellType);
-    menuCtx.fillStyle = spellType ? SPELL_COLORS[spellType] : "#444444";
+    menuCtx.fillStyle = spellType ? SPELL_COLORS[spellType] : "#5a4a38";
     menuCtx.fillRect(rect.x + 12, rect.y + 34, 28, 28);
-    menuCtx.fillStyle = "#ffffff";
+    menuCtx.fillStyle = "#f7e9c8";
     menuCtx.font = "14px sans-serif";
     menuCtx.fillText(spell ? spell.name : "empty", rect.x + 48, rect.y + 54);
 
     return rect;
   }
   menuLayout.slotA = drawSlot("A", equippedSpells.A, sx);
-  menuLayout.slotX = drawSlot("X", equippedSpells.X, sx + slotW + slotGap);
+  menuLayout.slotB = drawSlot("B", equippedSpells.B, sx + slotW + slotGap);
 
   menuCtx.textAlign = "left";
-  menuCtx.fillStyle = "#cccccc";
+  menuCtx.fillStyle = "#e8d9b8";
   menuCtx.font = "15px sans-serif";
   menuCtx.fillText(
     selectedSpellType ? "Point + trigger a slot to equip it" : "Point + trigger a spell to select it",
@@ -1326,7 +1422,7 @@ function redrawMenu() {
 
   // Sword / coins section
   let y = sy + slotH + 58;
-  menuCtx.strokeStyle = "#444458";
+  menuCtx.strokeStyle = "#402812";
   menuCtx.lineWidth = 2;
   menuCtx.beginPath();
   menuCtx.moveTo(20, y - 22);
@@ -1334,7 +1430,7 @@ function redrawMenu() {
   menuCtx.stroke();
 
   const spec = SWORD_TIERS[swordTier];
-  menuCtx.fillStyle = "#ffffff";
+  menuCtx.fillStyle = "#f7e9c8";
   menuCtx.font = "bold 20px sans-serif";
   menuCtx.fillText(`Sword: ${spec.name}`, 30, y + 10);
   menuCtx.textAlign = "right";
@@ -1346,10 +1442,10 @@ function redrawMenu() {
   menuCtx.font = "15px sans-serif";
   if (swordTier < SWORD_TIERS.length - 1) {
     const next = SWORD_TIERS[swordTier + 1];
-    menuCtx.fillStyle = coinCount >= spec.cost ? "#77ff99" : "#999999";
+    menuCtx.fillStyle = coinCount >= spec.cost ? "#8fff9f" : "#c4b39a";
     menuCtx.fillText(`Grip: upgrade to ${next.name} (${spec.cost} coins)`, 30, y);
   } else {
-    menuCtx.fillStyle = "#77ff99";
+    menuCtx.fillStyle = "#8fff9f";
     menuCtx.fillText("Sword fully upgraded!", 30, y);
   }
 
@@ -1389,8 +1485,8 @@ function hitTestMenu(px, py) {
   if (menuLayout.slotA && px >= menuLayout.slotA.x && px <= menuLayout.slotA.x + menuLayout.slotA.w && py >= menuLayout.slotA.y && py <= menuLayout.slotA.y + menuLayout.slotA.h) {
     return { key: "slotA", type: "slot", slot: "A" };
   }
-  if (menuLayout.slotX && px >= menuLayout.slotX.x && px <= menuLayout.slotX.x + menuLayout.slotX.w && py >= menuLayout.slotX.y && py <= menuLayout.slotX.y + menuLayout.slotX.h) {
-    return { key: "slotX", type: "slot", slot: "X" };
+  if (menuLayout.slotB && px >= menuLayout.slotB.x && px <= menuLayout.slotB.x + menuLayout.slotB.w && py >= menuLayout.slotB.y && py <= menuLayout.slotB.y + menuLayout.slotB.h) {
+    return { key: "slotB", type: "slot", slot: "B" };
   }
   return null;
 }
@@ -1466,8 +1562,8 @@ function updateMenuAndCasting() {
       redrawMenu();
     }
   } else {
-    if (wasJustPressed(rightGamepad, 4, "R4")) castSpell(equippedSpells.A, controller1); // both slots cast from the right hand
-    if (wasJustPressed(leftGamepad, 4, "L4")) castSpell(equippedSpells.X, controller1);
+    if (wasJustPressed(rightGamepad, 4, "R4")) castSpell(equippedSpells.A, controller1); // A button, right hand
+    if (wasJustPressed(rightGamepad, 5, "R5")) castSpell(equippedSpells.B, controller1); // B button, right hand
   }
 }
 
@@ -1549,7 +1645,6 @@ renderer.setAnimationLoop(() => {
   updateSwordHits(dt);
   updateZombies(dt);
   updateProjectiles(dt);
-  updateMirror();
 
   renderer.render(scene, camera);
 });
